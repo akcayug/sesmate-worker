@@ -6,6 +6,10 @@ torchaudio==2.4.0
 ffmpeg-python==0.2.0
 requests==2.*
 pydantic==2.*
+
+# pyannote ve arkadaşları NumPy 2.0 ile halen sorun çıkarabiliyor.
+# Bu yüzden NumPy/SciPy’i 1.x serisine sabitliyoruz:
+numpy==1.26.4
+scipy==1.11.4
+
 pyannote.audio==3.1.1
-numpy>=1.24
-scipy>=1.10
