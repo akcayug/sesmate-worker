@@ -12,10 +12,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Python bağımlılıkları
 COPY requirements.txt /app/requirements.txt
+
+# 1) pip ve temel bilim stack'ini ÖNCE sabitle
 RUN python3 -m pip install --upgrade pip && \
-    python3 -m pip install -r /app/requirements.txt
+    python3 -m pip install "numpy==1.26.4" "scipy==1.11.4"
+
+# 2) CUDA tekerleriyle Torch
+RUN python3 -m pip install --extra-index-url https://download.pytorch.org/whl/cu121 \
+    "torch==2.4.0" "torchaudio==2.4.0"
+
+# 3) Geri kalan bağımlılıklar (numpy/sci'yi YÜKSELTMEYECEK)
+RUN python3 -m pip install -r /app/requirements.txt
 
 # Worker dosyaları
 COPY rp_handler.py /app/rp_handler.py

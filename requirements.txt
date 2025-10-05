@@ -7,9 +7,7 @@ ffmpeg-python==0.2.0
 requests==2.*
 pydantic==2.*
 
-# pyannote ve arkadaşları NumPy 2.0 ile halen sorun çıkarabiliyor.
-# Bu yüzden NumPy/SciPy’i 1.x serisine sabitliyoruz:
-numpy==1.26.4
-scipy==1.11.4
-
 pyannote.audio==3.1.1
+librosa==0.10.1
+soundfile==0.12.1
+numba==0.58.1

@@ -9,6 +9,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 import runpod
 
+import numpy as _np
+import torch as _torch
+print("[env] numpy", _np.__version__, "| torch", _torch.__version__)
+
+
 # ======================
 # ENV / Defaults
 # ======================
