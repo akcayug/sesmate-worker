@@ -12,6 +12,8 @@ import runpod
 import numpy as _np
 import torch as _torch
 print("[env] numpy", _np.__version__, "| torch", _torch.__version__)
+print("[env] numpy", _np.__version__, "| torch", _torch.__version__, "| cuda?", _torch.cuda.is_available())
+print("[env] HF_TOKEN set?", bool(os.getenv("HF_TOKEN")), "| PIPELINE_ID:", os.getenv("PYANNOTE_PIPELINE_ID"))
 
 
 # ======================
@@ -102,26 +104,46 @@ def openai_transcribe(wav_path: str, language: Optional[str] = None, model: str 
 def run_pyannote(wav_path: str, min_spk: Optional[int] = None, max_spk: Optional[int] = None,
                  hparams: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     """
-    Dönen format (ham):
+    Dönen format:
       [{"start": float, "end": float, "speaker": "SPEAKER_00"}, ...]
     """
     if not HF_TOKEN:
-        return []
+        raise RuntimeError("HF_TOKEN missing in environment for pyannote diarization.")
 
-    from pyannote.audio import Pipeline
-    pipeline = Pipeline.from_pretrained(PYANNOTE_PIPELINE_ID, use_auth_token=HF_TOKEN).to("cuda")
+    try:
+        from pyannote.audio import Pipeline
+    except Exception as e:
+        raise RuntimeError(f"pyannote import failed: {e}")
+
+    try:
+        pipe = Pipeline.from_pretrained(PYANNOTE_PIPELINE_ID, use_auth_token=HF_TOKEN)
+        if pipe is None:
+            raise RuntimeError("Pipeline.from_pretrained returned None (check HF token & access).")
+    except Exception as e:
+        raise RuntimeError(f"pyannote load failed: {e}. "
+                           f"Hint: Ensure your HF token has access to {PYANNOTE_PIPELINE_ID} "
+                           f"(accept license on the model page).")
+
+    device = "cuda" if _torch.cuda.is_available() else "cpu"
+    try:
+        pipe.to(device)
+    except Exception as e:
+        raise RuntimeError(f"pyannote .to({device}) failed: {e}")
 
     # Hparam (opsiyonel)
     if hparams:
         for k1, sub in hparams.items():
             try:
-                obj = getattr(pipeline, k1)
+                obj = getattr(pipe, k1)
                 for k2, v in (sub or {}).items():
                     setattr(obj, k2, v)
             except Exception:
                 pass
 
-    diar = pipeline(wav_path, min_speakers=min_spk, max_speakers=max_spk)
+    try:
+        diar = pipe(wav_path, min_speakers=min_spk, max_speakers=max_spk)
+    except Exception as e:
+        raise RuntimeError(f"pyannote inference failed: {e}")
 
     turns = []
     for turn, _, speaker in diar.itertracks(yield_label=True):
