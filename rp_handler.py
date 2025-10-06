@@ -9,13 +9,17 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 import runpod
 
+from pathlib import Path
+
 import numpy as _np
 import torch as _torch
+import os as _os
+
 
 print("[env] numpy", _np.__version__, "| torch", _torch.__version__)
 print("[env] numpy", _np.__version__, "| torch", _torch.__version__, "| cuda?", _torch.cuda.is_available())
 print("[env] HF_TOKEN set?", bool(os.getenv("HF_TOKEN")), "| PIPELINE_ID:", os.getenv("PYANNOTE_PIPELINE_ID"))
-
+print("[env] numpy", _np.__version__, "| torch", _torch.__version__, "| cuda?", _torch.cuda.is_available(), "| n_devs:", _torch.cuda.device_count())
 
 # ======================
 # ENV / Defaults
@@ -43,6 +47,15 @@ def post_callback(callback_url: str, payload: Dict[str, Any]):
         headers["Authorization"] = f"Bearer {CALLBACK_BEARER}"
     r = requests.post(callback_url, headers=headers, data=json.dumps(payload), timeout=60)
     r.raise_for_status()
+
+def _pick_device():
+    """CUDA gerçekten mevcutsa cuda, yoksa cpu döner."""
+    try:
+        if _torch.cuda.is_available() and _torch.cuda.device_count() > 0 and Path("/dev/nvidia0").exists():
+            return _torch.device("cuda:0")
+    except Exception:
+        pass
+    return _torch.device("cpu")
 
 # ======================
 # Download + FFmpeg
@@ -102,70 +115,46 @@ def openai_transcribe(wav_path: str, language: Optional[str] = None, model: str 
 # ======================
 # Pyannote diarization
 # ======================
-def run_pyannote(
-    wav_path: str,
-    min_spk: Optional[int] = None,
-    max_spk: Optional[int] = None,
-    hparams: Optional[Dict[str, Any]] = None
-) -> List[Dict[str, Any]]:
-    """
-    Dönen format:
-      [{"start": float, "end": float, "speaker": "SPEAKER_00"}, ...]
-    """
+def run_pyannote(wav_path: str,
+                 min_spk: Optional[int] = None,
+                 max_spk: Optional[int] = None,
+                 hparams: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     if not HF_TOKEN:
         raise RuntimeError("HF_TOKEN missing in environment for pyannote diarization.")
 
-    try:
-        from pyannote.audio import Pipeline
-    except Exception as e:
-        raise RuntimeError(f"pyannote import failed: {e}")
+    from pyannote.audio import Pipeline
+    pipe = Pipeline.from_pretrained(PYANNOTE_PIPELINE_ID, use_auth_token=HF_TOKEN)
+    if pipe is None:
+        raise RuntimeError("Pipeline.from_pretrained returned None (check HF token & access).")
 
-    # Modeli yükle (gated ise HF'te erişimi kabul ettiğinden emin ol)
+    # Seçim + güvenli fallback
+    dev = _pick_device()
     try:
-        pipe = Pipeline.from_pretrained(PYANNOTE_PIPELINE_ID, use_auth_token=HF_TOKEN)
-        if pipe is None:
-            raise RuntimeError("Pipeline.from_pretrained returned None (check HF token & access).")
+        pipe.to(dev)  # torch.device veriyoruz
     except Exception as e:
-        raise RuntimeError(
-            f"pyannote load failed: {e}. "
-            f"Hint: Ensure your HF token has access to {PYANNOTE_PIPELINE_ID} (accept license on the model page)."
-        )
+        # CUDA init patlarsa CPU'ya düş
+        pipe.to(_torch.device("cpu"))
 
-    # 🔧 KRİTİK FARK: string değil, torch.device kullan
-    try:
-        dev_str = os.getenv("PYANNOTE_DEVICE")  # opsiyonel override (örn. "cuda:0" / "cpu")
-        if dev_str:
-            dev = _torch.device(dev_str)
-        else:
-            dev = _torch.device("cuda:0" if _torch.cuda.is_available() else "cpu")
-        pipe.to(dev)
-    except Exception as e:
-        raise RuntimeError(f"pyannote .to(device) failed: {e}")
-
-    # (opsiyonel) hparams aktarımı
+    # (opsiyonel) hparams
     if hparams:
         for k1, sub in (hparams or {}).items():
-            try:
-                obj = getattr(pipe, k1)
-                for k2, v in (sub or {}).items():
+            obj = getattr(pipe, k1, None)
+            if obj is None:
+                continue
+            for k2, v in (sub or {}).items():
+                try:
                     setattr(obj, k2, v)
-            except Exception:
-                # hparam set edilemeyen alanları sessiz geçiyoruz
-                pass
+                except Exception:
+                    pass
 
-    # Çalıştır
-    try:
-        diar = pipe(wav_path, min_speakers=min_spk, max_speakers=max_spk)
-    except Exception as e:
-        raise RuntimeError(f"pyannote inference failed: {e}")
+    diar = pipe(wav_path, min_speakers=min_spk, max_speakers=max_spk)
 
-    # Çıkışı normalize et
-    turns: List[Dict[str, Any]] = []
+    turns = []
     for turn, _, speaker in diar.itertracks(yield_label=True):
         turns.append({"start": float(turn.start), "end": float(turn.end), "speaker": str(speaker)})
     turns.sort(key=lambda x: (x["start"], x["end"]))
     return turns
-    
+
 def normalize_turns(turns: List[Dict[str, Any]]) -> Tuple[List[Dict[str, Any]], set]:
     """
     'SPEAKER_00/01' → 'S1/S2' map edip:
