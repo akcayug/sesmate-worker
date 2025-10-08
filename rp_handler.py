@@ -49,12 +49,10 @@ def post_callback(callback_url: str, payload: Dict[str, Any]):
     r.raise_for_status()
 
 def _pick_device():
-    """CUDA gerçekten mevcutsa cuda, yoksa cpu döner."""
-    try:
-        if _torch.cuda.is_available() and _torch.cuda.device_count() > 0 and Path("/dev/nvidia0").exists():
-            return _torch.device("cuda:0")
-    except Exception:
-        pass
+    print(">>> CUDA available?", _torch.cuda.is_available(), "| using:", dev)
+    print(">>> current_device:", _torch.cuda.current_device() if _torch.cuda.is_available() else "cpu")
+    if _torch.cuda.is_available() and _torch.cuda.device_count() > 0:
+        return _torch.device("cuda:0")
     return _torch.device("cpu")
 
 # ======================
