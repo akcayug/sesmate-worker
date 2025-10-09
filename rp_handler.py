@@ -126,6 +126,7 @@ def run_pyannote(wav_path: str,
     from pyannote.audio import Pipeline
     pipe = Pipeline.from_pretrained(PYANNOTE_PIPELINE_ID, use_auth_token=HF_TOKEN)
     dev = _pick_device()
+    print(">>> diarization on:", dev)
     try:
         pipe.to(dev)
         print(">>> diarization on:", dev)
