@@ -49,11 +49,14 @@ def post_callback(callback_url: str, payload: Dict[str, Any]):
     r.raise_for_status()
 
 def _pick_device():
-    print(">>> CUDA available?", _torch.cuda.is_available(), "| using:", dev)
-    print(">>> current_device:", _torch.cuda.current_device() if _torch.cuda.is_available() else "cpu")
-    if _torch.cuda.is_available() and _torch.cuda.device_count() > 0:
-        return _torch.device("cuda:0")
-    return _torch.device("cpu")
+    use_cuda = _torch.cuda.is_available() and _torch.cuda.device_count() > 0
+    dev = _torch.device("cuda:0" if use_cuda else "cpu")
+    try:
+        cur = _torch.cuda.current_device() if use_cuda else "cpu"
+    except Exception:
+        cur = "cpu"
+    print(f">>> device selected: {dev}, cuda_available={use_cuda}, current={cur}")
+    return dev
 
 # ======================
 # Download + FFmpeg
@@ -122,6 +125,13 @@ def run_pyannote(wav_path: str,
 
     from pyannote.audio import Pipeline
     pipe = Pipeline.from_pretrained(PYANNOTE_PIPELINE_ID, use_auth_token=HF_TOKEN)
+    dev = _pick_device()
+    try:
+        pipe.to(dev)
+        print(">>> diarization on:", dev)
+    except Exception:
+        pipe.to(_torch.device("cpu"))
+        print(">>> diarization fallback to CPU")
     if pipe is None:
         raise RuntimeError("Pipeline.from_pretrained returned None (check HF token & access).")
 
