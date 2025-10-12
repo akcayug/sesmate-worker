@@ -42,11 +42,31 @@ def progress_update(job: Dict[str, Any], pct: int, stage: str, detail: str = "",
         pass
 
 def post_callback(callback_url: str, payload: Dict[str, Any]):
+    """
+    Callback gönderimi: 2xx dışı yanıt/timeout durumlarını LOGLA,
+    fakat EXCEPTION FIRLATMA (job FAILED olmasın).
+    """
     headers = {"Content-Type": "application/json"}
     if CALLBACK_BEARER:
         headers["Authorization"] = f"Bearer {CALLBACK_BEARER}"
-    r = requests.post(callback_url, headers=headers, data=json.dumps(payload), timeout=60)
-    r.raise_for_status()
+    try:
+        print(f"[callback] POST → {callback_url}")
+        r = requests.post(callback_url, headers=headers, data=json.dumps(payload), timeout=60)
+        print(f"[callback] status={r.status_code} len={len(r.content)}")
+        if r.status_code >= 400:
+            # detaylı görebilmek için gövdeden ilk 200 karakter
+            try:
+                print(f"[callback] body[:200]={r.text[:200]}")
+            except Exception:
+                pass
+        # raise_for_status KALDIRILDI → job düşmesin
+        return r
+    except Exception as e:
+        # Ağa/timeout'a dair tüm hataları loglayalım ama exception fırlatmayalım
+        import traceback
+        print(f"[callback] EXC {type(e).__name__}: {e}")
+        print(traceback.format_exc())
+        return None
 
 def _pick_device():
     use_cuda = _torch.cuda.is_available() and _torch.cuda.device_count() > 0
@@ -67,15 +87,24 @@ def download_to_temp(src_url: str) -> str:
     """
     tmpdir = tempfile.mkdtemp()
     out_path = os.path.join(tmpdir, "input.bin")
+    print(f"[download] GET {src_url}")
     with requests.get(
         src_url, stream=True, allow_redirects=True, timeout=180,
-        headers={"User-Agent": "Mozilla/5.0"}
+        headers={"User-Agent": "sesmate-worker/1.0"}
     ) as r:
-        r.raise_for_status()
+        cl = r.headers.get("Content-Length")
+        print(f"[download] status={r.status_code} clen={cl}")
+        if r.status_code >= 400:
+            try:
+                print(f"[download] body[:200]={r.text[:200]}")
+            except Exception:
+                pass
+            r.raise_for_status()
         with open(out_path, "wb") as f:
             for chunk in r.iter_content(1024 * 256):
                 if chunk:
                     f.write(chunk)
+    print(f"[download] saved → {out_path}")
     return out_path
 
 def to_wav16k_mono(src_url: str) -> str:
@@ -86,7 +115,15 @@ def to_wav16k_mono(src_url: str) -> str:
     tmpdir = tempfile.mkdtemp()
     out = os.path.join(tmpdir, "audio.wav")
     cmd = f'ffmpeg -y -i "{in_path}" -vn -ac 1 -ar 16000 -f wav "{out}"'
-    subprocess.run(shlex.split(cmd), check=True, capture_output=True)
+    print(f"[ffmpeg] {cmd}")
+    proc = subprocess.run(shlex.split(cmd), check=True, capture_output=True)
+    try:
+        # çok uzun olabilir; ilk/son 200 char yeter
+        if proc.stderr:
+            st = proc.stderr.decode("utf-8", "ignore")
+            print(f"[ffmpeg] stderr[:200]={st[:200]} ...")
+    except Exception:
+        pass
     return out
 
 # ======================
